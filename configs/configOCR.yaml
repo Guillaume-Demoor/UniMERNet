@@ -1,0 +1,93 @@
+datasets:
+  formula_rec_eval:
+    vis_processor:
+      eval:
+        name: "formula_image_eval"
+        image_size:
+          - 192
+          - 672
+   
+run:
+  runner: runner_iter
+  task: unimernet_train
+
+  batch_size_train: 32
+  batch_size_eval: 32
+  num_workers: 1
+
+  iters_per_inner_epoch: 2000
+  max_iters: 60000
+
+  seed: 42
+  output_dir: "../output/demo"
+
+  evaluate: True
+  test_splits: [ "eval" ]
+
+  device: "cuda"
+  world_size: 1
+  dist_url: "env://"
+  distributed: True
+  distributed_type: ddp  # or fsdp when train llm
+
+  generate_cfg:
+    temperature: 0.0
+
+gpu_devices: null #[0,1,2,3,4,5,6,7]
+backbone_layers:
+- 2
+- 3
+- 7
+betas:
+- 0.9
+- 0.999
+batchsize: 32
+bos_token: 1
+channels: 1
+debug: true
+decoder_args:
+  attn_on_attn: true
+  cross_attend: true
+  ff_glu: true
+  rel_pos_bias: false
+  use_scalenorm: false
+dim: 256
+encoder_depth: 4
+eos_token: 2
+epoch: 0
+epochs: 5
+gamma: 0.9995
+heads: 8
+id: null
+load_chkpt: null
+lr: 0.001
+lr_step: 30
+max_height: 192
+max_seq_len: 512
+max_width: 672
+micro_batchsize: 20
+min_height: 32
+min_width: 32
+model_path: output/try/1
+name: pix2tex
+num_layers: 4
+num_tokens: 8000
+optimizer: Adam
+output_path: outputs
+pad: True
+pad_token: 0
+patch_size: 16
+sample_freq: 2000
+save_freq: 1
+scheduler: StepLR
+seed: 42
+encoder_structure: hybrid
+temperature: 0.2
+test_samples: 5
+testbatchsize: 20
+tokenizer: models/Latexocr/tokenizer.json
+valbatches: 100
+no_cuda: False
+pad_token_id: 0
+bos_token_id: 1
+eos_token_id: 2
