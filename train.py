@@ -1,7 +1,6 @@
 import argparse
 import time
 from tqdm import tqdm
-import evaluate
 import random
 import re
 import unimernet.tasks as tasks
@@ -36,6 +35,7 @@ from pix2tex.models import get_model
 from pix2tex.utils import in_model_path, parse_args, seed_everything, get_optimizer, get_scheduler, gpu_memory_check, get_device
 from fonction import prepare_batch, padding
 from pix2tex.dataset.transforms import train_transform
+from pix2tex.eval import evaluate
 from functools import partial
 import warnings
 
@@ -79,6 +79,14 @@ def main(args):
         ToTensorV2()
         ]
     )
+    test_transform = alb.Compose(
+        [
+        alb.ToGray(p=1),  # Forcer la conversion en niveaux de gris avec probabilité de 1
+        alb.Lambda(image=fixed_padding),
+        alb.Normalize((0.7931,), (0.1738,)),  # Adaptation pour un seul canal en niveaux de gris
+        ToTensorV2()
+        ]
+    )
 
 
     image_path = "/home/gdemoor/warm/TestGuill/UniMERNet/UniMERNet/data/UniMER-1M/images"
@@ -93,7 +101,7 @@ def main(args):
     val_im_path = "/home/gdemoor/warm/TestGuill/UniMERNet/UniMERNet/formulae/val"
     val_math_file = "/home/gdemoor/warm/TestGuill/UniMERNet/UniMERNet/math.txt"
     val_list, math_val = load_data(val_im_path, val_math_file, args)
-    valdataset = MathDataset(val_list, math_val)
+    valdataset = MathDataset(val_list, math_val, transform = test_transform)
     valdataloader = DataLoader(valdataset, batch_size=20, num_workers=2)
 
 
@@ -120,6 +128,7 @@ def main(args):
         microbatch = args.batchsize
     print("Début de la boucle")
     try:
+        k = 0
         for e in range(args.epoch, args.epochs):
             args.epoch = e
             dset = tqdm(iter(dataloader))
@@ -139,7 +148,9 @@ def main(args):
                     dset.set_description('Loss: %.4f' % total_loss)
                     #if args.wandb:
                         #wandb.log({'train/loss': total_loss})
-                if (i+1+len(dataloader)*e) % args.sample_freq == 0:
+                else:
+                    k +=1
+                if ((i+1+len(dataloader)*e) % args.sample_freq == 0) or i == 0:
                     bleu_score, edit_distance, token_accuracy = evaluate(model, valdataloader, args, num_batches=int(args.valbatches*e/args.epochs), name='val')
 
                     if bleu_score > max_bleu and token_accuracy > max_token_acc:
@@ -154,7 +165,7 @@ def main(args):
             save_models(e, step=i)
         raise KeyboardInterrupt
     save_models(e, step=len(dataloader))     
-
+    print("Batches refused because of sequence length : ", k, ". Which is : ", k*dataloader.batch_size)
 
 if __name__ == "__main__":
     parsed_args = parse_args2()

@@ -24,6 +24,18 @@ from unimernet.processors import *
 from unimernet.tasks import *
 from unimernet.processors import load_processor
 from pix2tex.cli import LatexOCR
+from pix2tex.models import get_model
+import yaml
+from transformers import AutoTokenizer, AutoModel
+from munch import Munch
+import albumentations as alb
+from albumentations.pytorch import ToTensorV2
+from fonction import padding, prepare_batch
+from functools import partial
+import warnings
+from pix2tex.utils import get_device
+from pix2tex.eval import detokenize
+from transformers import PreTrainedTokenizerFast
 
 class MathDataset(Dataset):
     def __init__(self, image_paths, math_gts, transform=None):
@@ -134,7 +146,7 @@ def parse_args2():
     
 def parse_args():
     parser = argparse.ArgumentParser(description="Training")
-    parser.add_argument("--cfg-path", required=True, help="path to configuration file.")
+    parser.add_argument("--config", required=True, help="path to configuration file.")
     parser.add_argument("--result_path", type=str, help="Path to json file to save result to.")
     parser.add_argument(
         "--options",
@@ -147,28 +159,28 @@ def parse_args():
     return args
 
 
-def main():
+def main(args):
 
     setup_seeds()
-    # Load Model and Processor
-    start = time.time()
-    cfg = Config(parse_args())
-    task = tasks.setup_task(cfg)
-    model = task.build_model(cfg)
+    
+    # Modèle UniMERnet
+    # cfg = Config(parse_args())
+    # task = tasks.setup_task(cfg)
+    # #model = task.build_model(cfg)
+    # model = AutoModel.from_pretrained("wanderkid/unimernet")
+
+
+    # Modèle LaTeX-OCR
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    vis_processor = load_processor('formula_image_eval', cfg.config.datasets.formula_rec_eval.vis_processor.eval)
+    args.device = get_device(args, args.no_cuda)
+    model = get_model(args)
+    model.load_state_dict(torch.load(args.checkpoint, args.device))
     model.to(device)
 
-    print(f'arch_name:{cfg.config.model.arch}')
-    print(f'model_type:{cfg.config.model.model_type}')
-    print(f'checkpoint:{cfg.config.model.finetuned}')
-    print(f'='*100)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file= args.tokenizer)
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    end1 = time.time()
-
-    # Generate prediction with MFR model
     print(f'Device:{device}')
-    print(f'Load model: {end1 - start:.3f}s')
 
     # Load Data (image and corresponding annotations)
     val_names = [
@@ -193,25 +205,50 @@ def main():
 
 
     for val_name, image_path, math_file in zip(val_names, image_paths, math_files):
-        image_list, math_gts = load_data(image_path, math_file)
+        image_list, math_gts = load_data(image_path, math_file, args)
 
-        transform = transforms.Compose([
-            vis_processor,
-        ])
 
-        dataset = MathDataset(image_list, math_gts, transform=transform)
+        warnings.filterwarnings("ignore", message="The image is already gray")
+        fixed_padding = partial(padding, max_width= 672, max_height= 192)
+        test_transform = alb.Compose(
+        [
+        alb.ToGray(p=1),  # Forcer la conversion en niveaux de gris avec probabilité de 1
+        alb.Lambda(image=fixed_padding),
+        alb.Normalize((0.7931,), (0.1738,)),  # Adaptation pour un seul canal en niveaux de gris
+        ToTensorV2()
+        ]
+        )
+
+        dataset = MathDataset(image_list, math_gts, transform=test_transform)
         dataloader = DataLoader(dataset, batch_size=32, num_workers=16)
         
-        math_preds = []
-        for images, label in tqdm(dataloader):
-            images = images.to(device)
-            with torch.no_grad():
-                output = model.generate({"image": images})
-            math_preds.extend(output["pred_str"])
 
+        k=0
+        norm_preds = []
+        norm_gts = []
+        for images, labels in tqdm(dataloader):
+            images, labels = prepare_batch(images, labels, args)
+            if labels is not None and images is not None:
+                images = images.to(device)
+                with torch.no_grad():
+                    output = model.generate(images, temperature=0.2)
+                output = detokenize(output, tokenizer)
+                output = [''.join(sublist) for sublist in output]
+
+                    # output = model.generate({"image": images})
+                #print(output, flush=True)
+                # math_preds.extend(output)
+                labels = detokenize(labels['input_ids'], tokenizer)
+                labels = [''.join(sublist) for sublist in labels]
+                norm_preds.extend([normalize_text(seq) for seq in output])
+                norm_gts.extend([normalize_text(label) for label in labels])
+            else:
+                k+=1
+            # math_preds.extend(output["pred_str"])
+        print("Batch loupés pcq seq_length : ", k)
         # Compute BLEU/METEOR/EditDistance
-        norm_gts = [normalize_text(gt) for gt in math_gts]
-        norm_preds = [normalize_text(pred) for pred in math_preds] 
+        # norm_gts = [normalize_text(gt) for gt in math_gts]
+        # norm_preds = [normalize_text(pred) for pred in math_preds] 
         print(f'len_gts:{len(norm_gts)}, len_preds={len(norm_preds)}')
         print(f'norm_gts[0]:{norm_gts[0]}')
         print(f'norm_preds[0]:{norm_preds[0]}')
@@ -234,9 +271,11 @@ def main():
         end2 = time.time()
 
         print(f'Evaluation Set:{val_name}')
-        print(f'Inference Time: {end2 - end1}s')
         print(tabulate(score_table, headers=[*score_headers]))
         print('='*100)
 
 if __name__ == "__main__":
-    main()
+    parsed_args = parse_args2()
+    with open(parsed_args.config, 'r') as f:
+        params = yaml.load(f, Loader=yaml.FullLoader)
+    main(Munch(params))

@@ -15,7 +15,6 @@ from tabulate import tabulate
 from rapidfuzz.distance import Levenshtein
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from testunimernet import setup_seeds, load_data, MathDataset
 from unimernet.common.config import Config
 from unimernet.datasets.builders import *
 from unimernet.models import *
