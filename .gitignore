@@ -21,3 +21,8 @@ models/*
 !models/README.md
 dist/
 
+formulae/*
+output/*
+jobs/*
+sandbox.py
+environment.yaml

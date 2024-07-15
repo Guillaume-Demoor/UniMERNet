@@ -7,6 +7,7 @@ import unimernet.tasks as tasks
 import albumentations as alb
 from albumentations.pytorch import ToTensorV2
 import os
+import csv
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -126,6 +127,10 @@ def main(args):
     microbatch = args.get('micro_batchsize', -1)
     if microbatch == -1:
         microbatch = args.batchsize
+
+    val_metrics = {"BLEU": [], "Accuracy": [], "ED": [], "Epoch": []}
+    val_loss = {"Epoch": [], "Loss": []}
+
     print("Début de la boucle")
     try:
         k = 0
@@ -142,6 +147,8 @@ def main(args):
                         loss = model.data_parallel(im[j:j+microbatch].to(device), device_ids=args.gpu_devices, tgt_seq=tgt_seq, mask=tgt_mask)*microbatch/dataloader.batch_size
                         loss.backward()  # data parallism loss is a vector
                         total_loss += loss.item()
+                        val_loss["Loss"].append(total_loss)
+                        val_loss["Epoch"].append(e)
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                     opt.step()
                     scheduler.step()
@@ -152,7 +159,10 @@ def main(args):
                     k +=1
                 if ((i+1+len(dataloader)*e) % args.sample_freq == 0) or i == 0:
                     bleu_score, edit_distance, token_accuracy = evaluate(model, valdataloader, args, num_batches=int(args.valbatches*e/args.epochs), name='val')
-
+                    val_metrics["BLEU"].append(bleu_score)
+                    val_metrics["ED"].append(edit_distance)
+                    val_metrics["Accuracy"].append(token_accuracy)
+                    val_metrics["Epoch"].append(e)
                     if bleu_score > max_bleu and token_accuracy > max_token_acc:
                         max_bleu, max_token_acc = bleu_score, token_accuracy
                         save_models(e, step=i)
@@ -166,6 +176,25 @@ def main(args):
         raise KeyboardInterrupt
     save_models(e, step=len(dataloader))     
     print("Batches refused because of sequence length : ", k, ". Which is : ", k*dataloader.batch_size)
+
+
+    csv_file = 'metrics.csv'
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Écrire l'en-tête (les clés du dictionnaire)
+        writer.writerow(val_metrics.keys())
+        # Écrire les lignes (valeurs du dictionnaire)
+        writer.writerows(zip(*val_metrics.values()))
+    print(f"Les métriques de validation ont été sauvegardées dans {csv_file}")
+
+    csv_file = 'loss.csv'
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Écrire l'en-tête (les clés du dictionnaire)
+        writer.writerow(val_loss.keys())
+        # Écrire les lignes (valeurs du dictionnaire)
+        writer.writerows(zip(*val_loss.values()))
+    print(f"Les métriques de validation ont été sauvegardées dans {csv_file}")
 
 if __name__ == "__main__":
     parsed_args = parse_args2()
