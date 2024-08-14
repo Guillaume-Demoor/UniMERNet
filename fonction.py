@@ -44,8 +44,8 @@ def prepare_batch(ims, eqs, args):
     for k, p in zip(tok, [[args.bos_token_id, args.eos_token_id], [1, 1]]):
         tok[k] = pad_sequence([torch.LongTensor([p[0]]+x+[p[1]]) for x in tok[k]], batch_first=True, padding_value=args.pad_token_id)
     # check if sequence length is too long
-    if args.max_seq_len < tok['attention_mask'].shape[1]:
-        return None, None
+    # if args.max_seq_len < tok['attention_mask'].shape[1]:
+    #     return None, None
     try:
         ims = torch.cat(list(ims)).float().unsqueeze(1)
     except RuntimeError:

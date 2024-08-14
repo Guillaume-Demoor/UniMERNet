@@ -39,12 +39,13 @@ from pix2tex.dataset.transforms import train_transform
 from pix2tex.eval import evaluate
 from functools import partial
 import warnings
+from torch.utils.tensorboard import SummaryWriter 
 
 
 
 def main(args):
 
-    setup_seeds()
+    seed_everything(args.seed)
     # Load Model and Processor
     # cfg = Config(args)
     # vis_processor = load_processor('formula_image_eval', cfg.config.datasets.formula_rec_eval.vis_processor.eval)
@@ -97,13 +98,13 @@ def main(args):
     end = time.time()
     print("Train data load : ok", " Time : ", end-start, "s")
     dataset = MathDataset(image_list, math_gts, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=40, num_workers=14)
+    dataloader = DataLoader(dataset, batch_size=40, num_workers=14, shuffle=True)
 
     val_im_path = "/home/gdemoor/warm/TestGuill/UniMERNet/UniMERNet/formulae/val"
     val_math_file = "/home/gdemoor/warm/TestGuill/UniMERNet/UniMERNet/math.txt"
     val_list, math_val = load_data(val_im_path, val_math_file, args)
     valdataset = MathDataset(val_list, math_val, transform = test_transform)
-    valdataloader = DataLoader(valdataset, batch_size=20, num_workers=2)
+    valdataloader = DataLoader(valdataset, batch_size=20, num_workers=2, shuffle=True)
 
 
     print("Dataloader : ok")
@@ -128,8 +129,7 @@ def main(args):
     if microbatch == -1:
         microbatch = args.batchsize
 
-    val_metrics = {"BLEU": [], "Accuracy": [], "ED": [], "Epoch": []}
-    val_loss = {"Epoch": [], "Loss": []}
+    writer = SummaryWriter("runs")
 
     print("Début de la boucle")
     try:
@@ -147,8 +147,7 @@ def main(args):
                         loss = model.data_parallel(im[j:j+microbatch].to(device), device_ids=args.gpu_devices, tgt_seq=tgt_seq, mask=tgt_mask)*microbatch/dataloader.batch_size
                         loss.backward()  # data parallism loss is a vector
                         total_loss += loss.item()
-                        val_loss["Loss"].append(total_loss)
-                        val_loss["Epoch"].append(e)
+                        writer.add_scalar("Loss", total_loss, e)
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                     opt.step()
                     scheduler.step()
@@ -157,12 +156,12 @@ def main(args):
                         #wandb.log({'train/loss': total_loss})
                 else:
                     k +=1
-                if ((i+1+len(dataloader)*e) % args.sample_freq == 0) or i == 0:
+                if ((i+1+len(dataloader)*e) % args.sample_freq == 0):
                     bleu_score, edit_distance, token_accuracy = evaluate(model, valdataloader, args, num_batches=int(args.valbatches*e/args.epochs), name='val')
-                    val_metrics["BLEU"].append(bleu_score)
-                    val_metrics["ED"].append(edit_distance)
-                    val_metrics["Accuracy"].append(token_accuracy)
-                    val_metrics["Epoch"].append(e)
+                    print('Epoch: %.2f: BLEU: %.2f, Edit Distance: %.2f, Token Accuracy: %.2f' % (e, bleu_score, edit_distance, token_accuracy))
+                    writer.add_scalar("BLEU", bleu_score, e)
+                    writer.add_scalar("Edit distance", edit_distance, e)
+                    writer.add_scalar("Accuracy", token_accuracy, e)
                     if bleu_score > max_bleu and token_accuracy > max_token_acc:
                         max_bleu, max_token_acc = bleu_score, token_accuracy
                         save_models(e, step=i)
@@ -175,26 +174,7 @@ def main(args):
             save_models(e, step=i)
         raise KeyboardInterrupt
     save_models(e, step=len(dataloader))     
-    print("Batches refused because of sequence length : ", k, ". Which is : ", k*dataloader.batch_size)
-
-
-    csv_file = 'metrics.csv'
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        # Écrire l'en-tête (les clés du dictionnaire)
-        writer.writerow(val_metrics.keys())
-        # Écrire les lignes (valeurs du dictionnaire)
-        writer.writerows(zip(*val_metrics.values()))
-    print(f"Les métriques de validation ont été sauvegardées dans {csv_file}")
-
-    csv_file = 'loss.csv'
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        # Écrire l'en-tête (les clés du dictionnaire)
-        writer.writerow(val_loss.keys())
-        # Écrire les lignes (valeurs du dictionnaire)
-        writer.writerows(zip(*val_loss.values()))
-    print(f"Les métriques de validation ont été sauvegardées dans {csv_file}")
+    writer.close()
 
 if __name__ == "__main__":
     parsed_args = parse_args2()
